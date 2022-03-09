@@ -5,7 +5,7 @@ from scipy.stats import norm
 from scipy.special import erfinv
 #import QuantLib as ql
 import matplotlib.pyplot as plt
-import statsmodels.api as sm
+#import statsmodels.api as sm
 import scipy
 import scipy.stats as stats
 import os
@@ -20,14 +20,12 @@ import h5py
 import warnings
 from FactorTest.FactorTestPara import *
 warnings.filterwarnings('ignore')
+import pyarrow.feather as feather
 import datetime
-import zipfile
-import shutil
-
 #设置图片保存格式和字体
 import matplotlib as mpl
-# mpl.rcParams['font.sans-serif'] = ['PingFang HK']  # 设置默认字体
-# mpl.rcParams['axes.unicode_minus'] = False #解决保存图像是负号显示为方块问题
+mpl.rcParams['font.sans-serif'] = ['PingFang HK']  # 设置默认字体
+mpl.rcParams['axes.unicode_minus'] = False #解决保存图像是负号显示为方块问题
 #读入pickle文件
 def read_pickle(filename):
     with open(filename, 'rb') as f:
@@ -43,14 +41,13 @@ def save_pickle(filename,data):
         pick.clear_memo()
         pick.dump(data)
 def read_feather(filename):
-    # sql_data = feather.read_feather(filename)
-    return pd.read_feather(filename)
+    sql_data = feather.read_feather(filename)
+    return sql_data
 def save_feather(filename,data):
     """
     注意：要求存储内容保持一致
     """
-    # feather.write_feather(data,filename)
-    data.reset_index(drop=True).to_feather(filename)
+    feather.write_feather(data,filename)
 # 保存hdf5文件，格式可以是df,也可以是很多df构成的dict，只支持一层嵌套
 def save_hdf5(df_or_dict,file_full_root,subgroup=None):
     '''
@@ -127,7 +124,7 @@ def getSql(sql_req):
     Oracle_userName = 'sjcj'
     Oracle_password = 'dwzqsjcj'
     Oracle_sid = 'sidwdzx1'
-    Oracle_ip = '180.168.106.62'
+    Oracle_ip = '222.92.214.61'
     Oracle_port = '20001'
     dsn_tns = cx_Oracle.makedsn(Oracle_ip, Oracle_port, Oracle_sid)
     db_oracle = cx_Oracle.connect(Oracle_userName, Oracle_password, dsn_tns)
@@ -195,7 +192,7 @@ def updateStockDailyRet():
         return x  
     adjclose['time']=adjclose['time'].apply(shift1)
     adjclose=kickout(adjclose)
-    save_feather(Datapath+'stockret.txt',adjclose.reset_index(drop=True))
+    adjclose.to_csv(filepathtestdata+'stockret.csv')
 #获得交易日历
 def getTradeDateList(period='date'):
     data=read_feather(Datapath+'BasicFactor_close.txt')
@@ -203,26 +200,14 @@ def getTradeDateList(period='date'):
         return data['time']
     elif(period=='month'):
         return pd.Series(data['time'].apply(lambda x:int(str(x)[:6])).unique(),name='time')
-def getFisicalList(period='Season'):
-    data=read_feather(Datapath+'BasicFactor_AShareFinancialIndicator_ANN_DT.txt')
-    year_list=pd.Series(data['time'].apply(lambda x:int(str(x)[:4])).unique(),name='time')
-    if(period=='year'):
-        return year_list.apply(lambda x:int(str(x)+'1231'))
-    else:
-        monthlist=[]
-        for year in year_list:
-            for season in ['0331','0630','0930','1231']:
-                monthlist.append(int(str(year)+season))
-        monthlist=pd.Series(monthlist)
-        return monthlist[monthlist>=19891231]
+
 #获取股票序列
 def getStockList():
     data=read_feather(Datapath+'BasicFactor_close.txt').set_index('time')
     return pd.Series(data.columns,name='code')
 #获取收益序列数据
 def getRetData():
-    # retData=pd.read_csv(filepathtestdata+'stockret.csv',usecols=[1,2,3]).dropna()
-    retData=read_feather(Datapath+'stockret.txt').dropna()
+    retData=pd.read_csv(filepathtestdata+'stockret.csv',usecols=[1,2,3]).dropna()
     return retData
 
 #读取指数行情数据 改 缺指数收益数据
@@ -360,9 +345,6 @@ def kickout(mer):
 def zscore(x):
     return (x-x.dropna().mean())/x.dropna().std()
 
-def zscorefac(x,fac):
-     x[fac]=(x[fac]-x[fac].dropna().mean())/x[fac].dropna().std()
-     return x
 def dePCT(x,fac,k1=0.01):
     x.loc[x[fac]>x[fac].quantile(1-k1),fac]=x[fac].quantile(1-k1)
     x.loc[x[fac]<x[fac].quantile(k1),fac]=x[fac].quantile(k1)
@@ -404,12 +386,12 @@ def getfactorname(x,L=['code','time']):
     return factor_list.to_list()
 
 #日频转换为月频率
-def dayToMonth(DF,factor_list='',method='last'):
+def dayToMonth(x,factor_list='',method='last'):
     """
     @param x:
     @param method:{'last','mean','sum'}
     """
-    x=DF.copy()
+    x=x.copy()
     if(factor_list==''):
         factor_list=getfactorname(x)
     x=x.pivot(index='time',columns=['code'],values=factor_list)
@@ -471,6 +453,7 @@ def calcResid(y,x1):
     return resid
 
 #加入行业
+#加入行业
 def addXSWindDum(DF):
     ind_tmp=getIndustryData(freq='month')
     if('SWind' in DF):
@@ -486,15 +469,13 @@ def addXSize(DF):
     Size_data=Size_data.set_index('time')
     Size_data=Size_data.stack().reset_index()
     Size_data.columns=['time','code','CMV']
-    def boxcoxcmv(x):
-        x['CMV']=scipy.stats.boxcox(x['CMV']+1)[0]
-        return x
-    Size_data=Size_data.groupby('time').apply(boxcoxcmv)
+    Size_data['CMV']=Size_data['CMV'].apply(lambda x:np.log(x))
     # Size_data=dayToMonth(Size_data)
     if('CMV' in DF):
         del DF['CMV']
     DF=DF.merge(Size_data,on=['time','code'],how='left')
     return DF
+
 def RegbyindSize(x,name):
     #代码补齐
     def zscore(x):
@@ -580,101 +561,8 @@ def calcIC(mer, factor_name):
     return sp,pd.Series([IC,ICIR,rankIC,rankICIR, t_v],index=['IC:','ICIR:','rankIC:','rankICIR:','t_value:'])
 #计算组合业绩
 
-def calcIClist(DF):
-    IC = sp.mean()
-    ICIR =x
-
-def ZipLocalFiles(file_path,save_path,zipname='',t=5):#t是分成的压缩包数量默认为5,file_path是需要压缩的文件夹路径,save_path是储存路径
-    def zip_files(file_path,files, zip_name ):
-        zip = zipfile.ZipFile( zip_name, 'w', zipfile.ZIP_DEFLATED )
-        for file in files:
-            filefull=os.path.join(file_path,file)
-            zip.write(filefull,file)
-        zip.close()
-    def get_file_list(file_path): #获取按时间顺序排列的文件名
-        dir_list = os.listdir(file_path)
-        dir_list = sorted(dir_list,key=lambda x: os.path.getmtime(os.path.join(file_path, x)))
-        return dir_list
-    def getFileSize(file_path,size=0): #获取文件夹大小
-        file_list=get_file_list(file_path)
-        for f in file_list:
-            size += os.path.getsize(file_path+f)
-        return size
-    ff=[]
-    fff=[]
-    file_list=get_file_list(file_path)
-    size=0
-    for f in file_list:
-        size += os.path.getsize(file_path+f)
-        ff.append(f)
-        if(t>1):
-            if size>(int(getFileSize(file_path,size=0))/(t-1)):
-                ff.remove(f)
-                size=os.path.getsize(file_path+f)
-                fff.append(ff)
-                ff=[]
-                ff.append(f)
-    fff.append(ff)
-    
-    for i in range(len(fff)):
-        files = fff[i]
-        zip_name =save_path+zipname+datetime.datetime.now().strftime('%Y%m%d')+'('+str(i+1)+')'+'.zip'#压缩包名字(%Y%m%d(i))
-        zip_files(file_path,files, zip_name)
-        
 
 
-def copyFile(file_path,target_path):                
-    if not os.path.isfile(file_path):
-        print ("%s 不存在!"%(file_path))
-    else:
-        if not os.path.exists(target_path):
-            os.makedirs(target_path)     
-        fpath,fname=os.path.split(file_path)                    
-        shutil.copy(file_path, target_path+'//'+ fname)          
-
-
-
-def copyFiles(A,B,cover=True):#A为源文件路径B为新文件路径
-    source_path= os.path.abspath(A)
-    target_path = os.path.abspath(B)
-    if cover:       
-        if os.path.exists(target_path):
-            # 如果目标路径存在原文件夹的话就先删除
-            shutil.rmtree(target_path)  
-        shutil.copytree(source_path, target_path)
-    else:
-        if not os.path.exists(target_path):
-            os.makedirs(target_path)
-        if os.path.exists(source_path):
-            for root, dirs, files in os.walk(source_path):
-                for file in files:
-                    src_file = os.path.join(root, file)
-                    shutil.copy(src_file, target_path)
-                    print(src_file)
-                for dirss in dirs:
-                    dir_file=os.path.join(root,dirss)
-                    if os.path.exists(target_path+'//'+dirss):
-                        shutil.rmtree(target_path+'//'+dirss)  
-                    shutil.copytree(dir_file,target_path+'//'+dirss)
-
-def calcAllFactorAns():
-    import FactorTest.FactorTestMain as FM
-    datainfo=pd.read_excel(FactorInfopath)
-    for i in tqdm(datainfo.index):
-       Test=FM.FactorTest()
-       Test.getFactor(read_feather(Factorpath+datainfo.loc[i,'地址']))
-       Test.autotest(datainfo.loc[i,'因子名称'],asc=False)
-       datainfo.loc[i,'IC']=Test.ICAns[datainfo.loc[i,'因子名称']]['IC:']
-       datainfo.loc[i,'ICIR']=Test.ICAns[datainfo.loc[i,'因子名称']]['ICIR:']
-       FacDF=Test.portfolioList[datainfo.loc[i,'因子名称']]
-       if(datainfo.loc[i,'IC']<0):
-           FacDF['多空组合']=FacDF['多空组合']*-1
-       datainfo.loc[i,'多空年化收益']=evaluatePortfolioRet(FacDF['多空组合'])['年化收益率:']
-       datainfo.loc[i,'多空信息比率']=ArithmeticErrorevaluatePortfolioRet(FacDF['多空组合'])['信息比率:']
-       FacDF['IC']=Test.ICList[datainfo.loc[i,'因子名称']]
-       FacDF.columns=pd.Series(FacDF.columns).apply(lambda x:str(x))
-       FacDF.reset_index().to_feather(Factorpath+'plotdata/'+datainfo.loc[i,'因子名称']+'.fth')
-    datainfo.to_excel(FactorInfopath, index=False)
 
 def evaluatePortfolioRet(Rev_seq,t=12):
     """
@@ -685,26 +573,17 @@ def evaluatePortfolioRet(Rev_seq,t=12):
     ret_mean=e**(Rev_seq.apply(lambda x:np.log(x+1)).mean()*t)-1
     ret_sharpe=Rev_seq.mean()*t/Rev_seq.std()/t**0.5
     ret_winrate=Rev_seq[Rev_seq>0].count()/Rev_seq.count()
-    Rev_list=(Rev_seq+1).cumprod()
-    ret_maxloss=(Rev_list/Rev_list.cummax()-1).min()
+    ret_maxloss=maxDrawDown(Rev_seq)
     return pd.Series([ret_mean,ret_sharpe,ret_winrate,ret_maxloss],index=['年化收益率:','信息比率:','胜率:','最大回撤:'])
 # 更新数据库信息
 def DataRenewTime():
     datainfo = pd.read_excel(DataInfopath)
-    for i in tqdm(datainfo['存储地址'].unique()):
-        if (os.path.exists(Datapath + i)):
-            datainfo.loc[datainfo['存储地址']==i, '最新时间'] = int(read_feather(Datapath + i)['time'].max())
-        else:
-            datainfo.loc[datainfo['存储地址']==i, '最新时间'] = np.nan
-    datainfo.to_excel(DataInfopath, index=False)
-def FactorRenewTime():
-    datainfo = pd.read_excel(FactorInfopath)
     for i in datainfo.index:
-        if (os.path.exists(Factorpath + datainfo.loc[i, '地址'])):
-            datainfo.loc[i, '最新时间'] = int(read_feather(Factorpath + datainfo.loc[i, '地址'])['time'].max())
+        if (os.path.exists(Datapath + datainfo.loc[i, '存储地址'])):
+            datainfo.loc[i, '最新时间'] = int(read_feather(Datapath + datainfo.loc[i, '存储地址'])['time'].max())
         else:
             datainfo.loc[i, '最新时间'] = np.nan
-    datainfo.to_excel(FactorInfopath, index=False)
+    datainfo.to_excel(DataInfopath, index=False)
   
 # 更新factor最新信息
 # 获得开始更新时间
@@ -719,7 +598,7 @@ def getUpdateStartTime(x, backdays=0):
     else:
         return (datetime.datetime.strptime(str(int(x.min())), '%Y%m%d') - datetime.timedelta(days=backdays)).strftime(
             '%Y%m%d')
-    
+
 def readLocalData(rawpath,key=''):
     """
        param:path 路径  key 键名
@@ -744,8 +623,7 @@ def readLocalDataSet(path_list):
     for path in path_list:
        data_tot=data_tot.merge(readLocalData(path),on=['time','code'],how='outer') 
     return data_tot
-
-#合并新旧信息（废弃）
+#合并新旧信息，
 def mergeAB(rawData,newData):
     """
     """
@@ -766,23 +644,21 @@ def readLocalFeather(path):
     if(os.path.exists(Datapath+path)):
         return read_feather(Datapath+path)
     else:
-        return pd.DataFrame(index=['time']).T
+        return pd.DataFrame(index=['time','code']).T
 
 
-#用于存储sql型数据  以object_ID为单位
+#用于存储sql型数据
 def saveSqlData(sqlData,infoDF):
-    path=Datapath+infoDF.loc[infoDF.index[0],'存储地址']
     if(os.path.exists(path)):
         data=read_feather(path)
     else:
-        data=pd.DataFrame(index=['id','time']).T  
-    sqlData['time']=sqlData['time'].apply(lambda x:int(x))
+        data=pd.DataFrame([])  
+    #把sqlData最后一部分拿出来， drop  
     data0=data[data.time<sqlData['time'].min()]
-    
     data=data[data.time>=sqlData['time'].min()]
-    data=data.append(sqlData).drop_duplicates(subset=['id'],keep='last').sort_values(by='time')
+    data=data.append(sqlData).drop_duplicates(subset=['time','code'],keep='last').sort_values(by='time')
     data0=data0.append(data)
-    save_feather(Datapath+infoDF.loc[infoDF.index[0],'存储地址'],data0)
+    save_feather(Datapath+infoDF.loc[i,'存储地址'],data0.pivot(index='time',columns='code',values=infoDF.loc[i,'数据库键']).reset_index())
 #存储日频数据
 def saveDailyData(sqlData,infoDF):
      for i in infoDF.index:
@@ -792,7 +668,7 @@ def saveDailyData(sqlData,infoDF):
         data0['time']=data0['time'].apply(lambda x:int(x))
         if('code' in data0):
             del data0['code']
-        save_feather(Datapath+infoDF.loc[i,'存储地址'],data0.drop_duplicates(subset='time',keep='last').sort_values(by='time').set_index('time').reset_index())
+        save_feather(Datapath+infoDF.loc[i,'存储地址'],data0.drop_duplicates(subset='time',keep='last').sort_values(by='time'))
 
 #用于存储财务数据
 def saveFinData(sqlData,infoDF):
@@ -804,8 +680,8 @@ def saveFinData(sqlData,infoDF):
         data0=data0.drop_duplicates(subset='time',keep='last')
         if('code' in data0):
             del data0['code']
-        save_feather(Datapath+infoDF.loc[i,'存储地址'],data0.set_index('time').reset_index())
-#用于存储行业成分股数据
+        save_feather(Datapath+infoDF.loc[i,'存储地址'],data0)
+#用于存储成分股数据
 def saveIndData(sqlData,infoDF):
      for i in infoDF.index:
          sqlData1=sqlData[['time','code',infoDF.loc[i,'数据库键']]]
@@ -823,9 +699,10 @@ def saveIndData(sqlData,infoDF):
          data0.replace({-1:np.nan},inplace=True)
          if('code' in data0):
              del data0['code']
-         save_feather(Datapath+infoDF.loc[i,'存储地址'],data0.set_index('time').reset_index())
+         save_feather(Datapath+infoDF.loc[i,'存储地址'],data0)
          
-#存储指数成分股
+
+#调试
 def saveIndexComponentData(sqlData,infoDF):
     i=infoDF.index[0]
     sqlData.columns=['time','code','signal']        
@@ -834,29 +711,10 @@ def saveIndexComponentData(sqlData,infoDF):
     data0=data0.append(sqlData.pivot(index='time',columns='code',values='signal')).reset_index()
     data0['time']=data0['time'].apply(lambda x:int(x))
     data0=data0.drop_duplicates(subset='time',keep='last').set_index('time').fillna(method='ffill').reindex(index=getTradeDateList(),columns=getStockList()).fillna(method='ffill').reset_index()  
-    data0.replace({'剔除':0,'纳入':1},inplace=True)
+    data0.replace({'剔除':np.nan,'纳入':1},inplace=True)
     if('code' in data0):
         del data0['code']
-    save_feather(Datapath+infoDF.loc[i,'存储地址'],data0.set_index('time').reset_index())
-
-
-def toShortForm(DF,faclist=''):
-    if(faclist==''):
-        faclist=getfactorname(DF,['code','time'])
-    if(type(faclist)=='str'):
-        faclist=[faclist]
-    DF1=DF.drop_duplicates(subset=['time','code'],keep='last').pivot(index='time',columns='code',values=faclist)
-    return DF1
-
-def toLongForm(DF):
-    return DF.stack().reset_index()
-
-def fillFisicalMonth(DF,faclist):
-    if(type(faclist)=='str'):
-        faclist=[faclist]
-    DF1=DF.drop_duplicates(subset=['time','code'],keep='last').pivot(index='time',columns='code',values=faclist).reindex(index=getTradeDateList('month'))
-    return DF1.fillna(method='ffill').stack().reset_index().dropna()
-
+    save_feather(Datapath+infoDF.loc[i,'存储地址'],data0)
 
 def partition(ls, size):
     """
@@ -867,32 +725,177 @@ def partition(ls, size):
         [[1, 2, 3], [4]]
     """
     return [ls[i:i+size] for i in range(0, len(ls), size)]
+
+
+#def getFisicalList(period='Season'):
+#    data=read_feather(Datapath+'BasicFactor_AShareFinancialIndicator_ANN_DT.txt')
+#    datelist=pd.Series(data['time'].apply(lambda x:int(str(x))).unique(),name='time')
+#    datelist=datelist[datelist.apply(lambda x:str(x)[-4:]).isin(['0331','0630','0930','1231'])]
+#    if(period=='year'):
+#        return datelist[datelist.apply(lambda x:str(x)[-4:]=='1231')]
+#    else:
+#        return datelist[datelist>=19921231]
+    
+    
+def getFisicalList(period='Season'):
+    data=read_feather(Datapath+'BasicFactor_AShareFinancialIndicator_ANN_DT.txt')
+    
+    year_list=pd.Series(data['time'].apply(lambda x:int(str(x)[:4])).unique(),name='time')
+    if(period=='year'):
+        return year_list.apply(lambda x:int(str(x)+'1231'))
+    else:
+        monthlist=[]
+        for year in year_list:
+            for season in ['0331','0630','0930','1231']:
+                monthlist.append(int(str(year)+season))
+        monthlist=pd.Series(monthlist)
+        return monthlist[monthlist>=19891231]
+'''
+lxy新增FB内容
+'''    
+
+
+'''
+计算每季度数据
+'''
+    
+def convFisicalQFA(Fa):#Fa为文件路径(要注意数据是否能够进行QFA操作，数据初始间隔需要为一季度)
+    df=read_feather(Fa)
+    df['time']=df['time'].astype(int)
+    df=df.set_index('time').reindex(getFisicalList()).iloc[1:]
+    tempt2=pd.DataFrame()
+    for i in range(int(len(df)/4)):
+        tempt=df.iloc[4*i:4*(i+1)]
+        tempt1=pd.DataFrame()
+        tempt1=tempt-tempt.shift(1)
+        tempt1.iloc[0]=tempt.iloc[0]
+        tempt2=tempt2.append(tempt1)
+    
+    return tempt2
          
-         
+'''
+计算最近十二个月数据
+'''         
 
-#装饰器——————————————————————————————————————————————————————
-#测时
-def testTime(func):
-    def test(*args,**kwargs):
-        starttime=time.time()
-        func(*args,**kwargs)
-        endtime=time.time()
-        print('用时：',round((endtime-starttime) * 1000),'ms')
-    return test
+def convFisicalTTM(Fa):#Fa为文件路径(注意数据能否能够进行TTM操作，数据初始间隔需要为一季度)
+    df=read_feather(Fa)
+    df['time']=df['time'].astype(int)
+    df=df.set_index('time').reindex(getFisicalList()).iloc[1:]
+    tempt2=pd.DataFrame()
+    for i in range(int(len(df)/4)-1):
+        tempt=df.iloc[4*i:4*(i+2)]
+        tempt1=pd.DataFrame()
+        tempt1=tempt-tempt.shift(4)+tempt.iloc[3]
+        tempt1=tempt1.iloc[4:]
+        tempt2=tempt2.append(tempt1)
+    
+    tempt2=tempt2.reset_index()
+    tempt2=tempt2.rename(columns={'index':'time'})
+    return tempt2
 
-#    @staticmethod  内置函数
-#    @property  1. 方法——》属性    2. self._A=1    设置self.A() return self._A  防止_A被修改
-#    @classmethod 通过类名直接调用函数
+'''
+计算同比增长率
+'''
+def convFisicalYOY(Fa):#Fa为文件路径(要注意数据是否能够进行YOY操作)
+    df=read_feather(Fa)
+    df['time']=df['time'].astype(int)
+    df=df.set_index('time').reindex(getFisicalList()).iloc[1:]
+    tempt2=pd.DataFrame()
+    for i in range(int(len(df)/4)-1):
+        tempt=df.iloc[4*i:4*(i+2)]
+        tempt1=pd.DataFrame()
+        tempt1=(tempt-tempt.shift(4))/tempt.shift(4)
+        tempt1=tempt1.iloc[4:]
+        tempt2=tempt2.append(tempt1)
+        
+    tempt2=tempt2.reset_index()
+    tempt2=tempt2.rename(columns={'index':'time'})
+    
+    return tempt2
 
 
 
 
-#预备
+def convFisicalROC(Fa,how='up'):
+    df=read_feather(Fa)
+    df['time']=df['time'].astype(int)
+    df=df.set_index('time').reindex(getFisicalList()).iloc[1:]
+    if how=='up':
+        tempt=df/df.shift(1)
+    if how=='down':
+        tempt=df/df.shift(-1)
+    tempt=tempt.reset_index()
+    tempt=tempt.rename(columns={'index':'time'})
+    
+    return tempt
+    
+    
+def saveHeatData(path,key='',needtrans=True):
+    if type(path)==str:
+        df=FB.read_feather(path)
+    else:
+        df=path.reset_index()
+    if needtrans==True:
+        df=FB.transData(df,key)
+    else:
+        df=df.set_index('time').stack().reset_index()
+        df.columns=['time','code',key]
+        df=df[df.time>=201001]
+        df=df[df.time<=202112]
+    df=df.groupby('time').apply(FB.deMAD,key)
+    df=FB.calcNeuIndSize(df,key)
+    df=df[['time','code',key+'_neu']]
+    df=df.dropna()
+    FB.save_feather(Factorpath+key+'_neu.txt',df)
+
+    return df
+    
+'''
+将原始数据与公布时间相结合
+'''
+
+def mergeANN(rawpath,key=''):#rawpath可以是文件路径也可以是矩阵形式，如果输入的是矩阵需要保证第一列为time，第二列为level_1，默认的key为factor，最后得到的矩阵分为4列，code、time、ANN_DT、key
+    if type(rawpath) is str:
+        if(key==''):
+            key='factor'
+        ANN_DT=read_feather(Datapath + 'BasicFactor_AShareFinancialIndicator_ANN_DT.txt').set_index('time').stack().reset_index().set_index('level_1').astype(int).reset_index()
+        data=read_feather(Datapath+rawpath).set_index('time').stack().reset_index()
+        df=pd.merge(ANN_DT,data,on=['time','level_1'])
+        df.columns=['code','time','ANN_DT',key]
+        df.dropna(subset=['ANN_DT'],inplace=True)
+        return df
+    else:  
+        if(key==''):
+            key='factor'
+        ANN_DT=read_feather(Datapath + 'BasicFactor_AShareFinancialIndicator_ANN_DT.txt').set_index('time').stack().reset_index().set_index('level_1').astype(int).reset_index()
+        df=pd.merge(ANN_DT,rawpath,on=['time','level_1'])
+        df.columns=['code','time','ANN_DT',key]
+        df.dropna(subset=['ANN_DT'],inplace=True)
+        return df
+
+
+'''
+将原本间隔为每季度的数据间隔减少为每月        
+'''
+def seasonToMonth(df):#df的格式要求为四列：code、time、ANN_DT、数据,最后得到的为三列，time、code、数据
+    
+    factorDF=df.copy()
+    key=factorDF.columns[3]
+    monthlist=getTradeDateList('month')
+    factorDF.dropna(subset=['ANN_DT'],inplace=True)
+    factorDF['rtime']=factorDF['ANN_DT'].apply(lambda x:int(str(x)[:6]))
+    factorDF=factorDF.drop_duplicates(subset=['code','rtime'],keep='last')
+    factorDF_loc=factorDF.pivot(index='rtime',columns='code',values= key)
+    factorDF_loc=factorDF_loc.reindex(monthlist[monthlist>=factorDF_loc.index[0]]).fillna(method='ffill')
+    factorDF=factorDF_loc.stack().reset_index()
+    factorDF.rename(columns={0:key},inplace=True)
+    return factorDF
+
+
+
+
+#输入的data需要为矩阵形式,index为序号，有一列为time，columns为code，默认的key为factor，output默认为三列式，如果output=‘matrix’可以输出矩阵
 def transData(data,key='factor',output='',startMonth=201001,endMonth=202112):
-    '''
-    #输入的data需要为矩阵形式,index为time，columns为code，默认的key为factor，output默认为三列式，如果output=‘matrix’可以输出矩阵
-
-    '''    
     ANN_DT=read_feather(Datapath + 'BasicFactor_AShareFinancialIndicator_ANN_DT.txt').set_index('time').stack().reset_index().set_index('level_1').astype(int).reset_index()
     data=data.set_index('time').stack().reset_index()
     factorDF=pd.merge(ANN_DT,data,on=['time','level_1'])
@@ -910,3 +913,19 @@ def transData(data,key='factor',output='',startMonth=201001,endMonth=202112):
         return factorDF.pivot(index='time',columns='code',values=key)
     else:
         return factorDF
+
+#装饰器——————————————————————————————————————————————————————
+#测时
+def testTime(func):
+    def test(*args,**kwargs):
+        starttime=time.time()
+        func(*args,**kwargs)
+        endtime=time.time()
+        print('用时：',round((endtime-starttime) * 1000),'ms')
+    return test
+
+#    @staticmethod  内置函数
+#    @property  1. 方法——》属性    2. self._A=1    设置self.A() return self._A  防止_A被修改
+#    @classmethod 通过类名直接调用函数
+
+

@@ -814,8 +814,9 @@ def convFisicalYOY(Fa):#Fa为文件路径(要注意数据是否能够进行YOY�
     return tempt2
 
 
-
-
+'''
+计算变化率，默认为how=up即：本期/上一期，how=down为上一期/本期
+'''
 def convFisicalROC(Fa,how='up'):
     df=read_feather(Fa)
     df['time']=df['time'].astype(int)
@@ -829,7 +830,11 @@ def convFisicalROC(Fa,how='up'):
     
     return tempt
     
-    
+ 
+'''
+储存中心化后的三列式数据，可输入地址，也可输入矩阵形式（注：随意做的，如果需要，建议自己重新写一个）
+'''
+   
 def saveHeatData(path,key='',needtrans=True):
     if type(path)==str:
         df=FB.read_feather(path)
@@ -851,7 +856,7 @@ def saveHeatData(path,key='',needtrans=True):
     return df
     
 '''
-将原始数据与公布时间相结合
+将原始数据与公布时间相结合（注：这个函数和下一个seasonToMonth的函数合并为了最下方transData函数）（保留是为了特殊情况下使用，可忽略。）
 '''
 
 def mergeANN(rawpath,key=''):#rawpath可以是文件路径也可以是矩阵形式，如果输入的是矩阵需要保证第一列为time，第二列为level_1，默认的key为factor，最后得到的矩阵分为4列，code、time、ANN_DT、key
@@ -895,7 +900,7 @@ def seasonToMonth(df):#df的格式要求为四列：code、time、ANN_DT、数�
 
 
 #输入的data需要为矩阵形式,index为序号，有一列为time，columns为code，默认的key为factor，output默认为三列式，如果output=‘matrix’可以输出矩阵
-def transData(data,key='factor',output='',startMonth=201001,endMonth=202112):
+def transData(data,key='factor',output='',startMonth=201001,endMonth=202112,method='ffill'):
     ANN_DT=read_feather(Datapath + 'BasicFactor_AShareFinancialIndicator_ANN_DT.txt').set_index('time').stack().reset_index().set_index('level_1').astype(int).reset_index()
     data=data.set_index('time').stack().reset_index()
     factorDF=pd.merge(ANN_DT,data,on=['time','level_1'])
@@ -904,7 +909,10 @@ def transData(data,key='factor',output='',startMonth=201001,endMonth=202112):
     factorDF['rtime']=factorDF['ANN_DT'].apply(lambda x:int(str(x)[:6]))
     factorDF=factorDF.drop_duplicates(subset=['code','rtime'],keep='last')
     factorDF_loc=factorDF.pivot(index='rtime',columns='code',values= key)
-    factorDF_loc=factorDF_loc.reindex(monthlist[monthlist>=factorDF_loc.index[0]]).fillna(method='ffill')
+    if method=='ffill':
+        factorDF_loc=factorDF_loc.reindex(monthlist[monthlist>=factorDF_loc.index[0]]).fillna(method='ffill')
+    if method=='bfill':
+        factorDF_loc=factorDF_loc.reindex(monthlist[monthlist>=factorDF_loc.index[0]]).fillna(method='bfill')        
     factorDF=factorDF_loc.stack().reset_index()
     factorDF.rename(columns={0:key},inplace=True)
     factorDF=factorDF[factorDF.time>=startMonth]
